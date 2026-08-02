@@ -65,7 +65,7 @@ defmodule BB.Sensor.INA219Test do
 
       assert {:ok, state} = Sensor.init(default_opts())
       assert state.ina == fake_ina()
-      assert state.publish_interval_ms == 1000
+      assert state.loop.period_ns == 1_000_000_000
       assert state.bb == default_bb_context()
       drain_self_tick()
     end
@@ -162,12 +162,12 @@ defmodule BB.Sensor.INA219Test do
     test "translates publish_rate to interval in milliseconds" do
       stub_acquire_success()
 
-      assert {:ok, %{publish_interval_ms: 100}} =
+      assert {:ok, %{loop: %{period_ns: 100_000_000}}} =
                Sensor.init(default_opts(publish_rate: ~u(10 hertz)))
 
       drain_self_tick()
 
-      assert {:ok, %{publish_interval_ms: 2}} =
+      assert {:ok, %{loop: %{period_ns: 2_000_000}}} =
                Sensor.init(default_opts(publish_rate: ~u(500 hertz)))
 
       drain_self_tick()
@@ -208,7 +208,7 @@ defmodule BB.Sensor.INA219Test do
       state = %{
         bb: default_bb_context(),
         ina: fake_ina(),
-        publish_interval_ms: 1000
+        loop: BB.Loop.new(default_bb_context(), clock: {:rate, ~u(1 hertz)})
       }
 
       {:ok, state: state}
@@ -223,7 +223,11 @@ defmodule BB.Sensor.INA219Test do
         :ok
       end)
 
-      assert {:noreply, ^state} = Sensor.handle_info(:tick, state)
+      # Everything but the loop is carried through untouched; the loop advances
+      # its deadline and tick count on every tick.
+      assert {:noreply, new_state} = Sensor.handle_info(:tick, state)
+      assert Map.delete(new_state, :loop) == Map.delete(state, :loop)
+      assert new_state.loop.ticks == state.loop.ticks + 1
 
       assert_receive {:published, TestRobot, [:sensor, :chassis, @sensor_name], payload}
       assert payload.voltage == 12.4
@@ -256,11 +260,11 @@ defmodule BB.Sensor.INA219Test do
       assert :no_tick = drain_self_tick()
     end
 
-    test "reschedules a tick at publish_interval_ms", %{state: state} do
+    test "reschedules a tick at the publish rate", %{state: state} do
       stub_read_success()
       stub(BB, :publish, fn _, _, _ -> :ok end)
 
-      state = %{state | publish_interval_ms: 10}
+      state = %{state | loop: BB.Loop.new(default_bb_context(), clock: {:rate, ~u(100 hertz)})}
       Sensor.handle_info(:tick, state)
 
       assert_receive :tick, 50
@@ -268,17 +272,17 @@ defmodule BB.Sensor.INA219Test do
   end
 
   describe "handle_options/2" do
-    test "recomputes publish_interval_ms" do
+    test "rebuilds the loop at the new publish rate" do
       state = %{
         bb: default_bb_context(),
         ina: fake_ina(),
-        publish_interval_ms: 1000
+        loop: BB.Loop.new(default_bb_context(), clock: {:rate, ~u(1 hertz)})
       }
 
       assert {:ok, new_state} =
                Sensor.handle_options([publish_rate: ~u(50 hertz)], state)
 
-      assert new_state.publish_interval_ms == 20
+      assert new_state.loop.period_ns == 20_000_000
       assert new_state.ina == state.ina
     end
   end
