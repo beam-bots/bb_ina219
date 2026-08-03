@@ -55,8 +55,6 @@ defmodule BB.Sensor.INA219 do
 
   alias BB.Message
   alias BB.Message.Sensor.PowerState
-  alias BB.Robot.Units
-  alias Localize.Unit
   alias Wafer.Driver.Circuits.I2C, as: CircuitsI2C
 
   @calibrations [:calibrate_32V_2A, :calibrate_32V_1A, :calibrate_16V_400mA]
@@ -101,15 +99,12 @@ defmodule BB.Sensor.INA219 do
              power_divisor: power_divisor
            ),
          {:ok, ina} <- apply(INA219, opts.calibration, [ina]) do
-      publish_interval_ms = hertz_to_ms(opts.publish_rate)
-
       state = %{
         bb: opts.bb,
         ina: ina,
-        publish_interval_ms: publish_interval_ms
+        loop: BB.Loop.arm(BB.Loop.new(opts.bb, clock: {:rate, opts.publish_rate}))
       }
 
-      schedule_tick(publish_interval_ms)
       {:ok, state}
     else
       {:error, reason} -> {:stop, reason}
@@ -118,19 +113,25 @@ defmodule BB.Sensor.INA219 do
 
   @impl BB.Sensor
   def handle_info(:tick, state) do
+    {_dt, _skipped, loop} = BB.Loop.tick(state.loop)
     {:ok, fields} = read(state.ina)
     frame_id = List.last(state.bb.path)
     message = Message.new!(PowerState, frame_id, fields)
     BB.publish(state.bb.robot, [:sensor | state.bb.path], message)
-    schedule_tick(state.publish_interval_ms)
-    {:noreply, state}
+    {:noreply, %{state | loop: loop}}
   end
 
   @impl BB.Sensor
   def handle_options(new_opts, state) do
     new_opts = Map.new(new_opts)
-    publish_interval_ms = hertz_to_ms(new_opts.publish_rate)
-    {:ok, %{state | publish_interval_ms: publish_interval_ms}}
+
+    loop =
+      state.loop
+      |> BB.Loop.cancel()
+      |> then(&BB.Loop.new(&1.bb, clock: {:rate, new_opts.publish_rate}))
+      |> BB.Loop.arm()
+
+    {:ok, %{state | loop: loop}}
   end
 
   defp read(ina) do
@@ -151,15 +152,4 @@ defmodule BB.Sensor.INA219 do
   defp divisors_for(:calibrate_32V_2A), do: {10, 2}
   defp divisors_for(:calibrate_32V_1A), do: {25, 1}
   defp divisors_for(:calibrate_16V_400mA), do: {20, 1}
-
-  defp hertz_to_ms(rate) do
-    rate
-    |> Unit.convert!("hertz")
-    |> Units.extract_float()
-    |> then(&round(1000 / &1))
-  end
-
-  defp schedule_tick(ms) do
-    Process.send_after(self(), :tick, ms)
-  end
 end
