@@ -10,6 +10,19 @@ See [Conventional Commits](Https://conventionalcommits.org) for commit guideline
 
 <!-- changelog -->
 
+## [v0.2.4](https://github.com/beam-bots/bb_sensor_ina219/compare/v0.2.3...v0.2.4) (2026-08-03)
+
+
+
+
+### Bug Fixes:
+
+* test: expect paren-less DSL from the installer (#50) by James Harton
+
+### Improvements:
+
+* drive the publish loop from `BB.Loop` (#52) by James Harton
+
 ## [v0.2.3](https://github.com/beam-bots/bb_sensor_ina219/compare/v0.2.2...v0.2.3) (2026-06-25)
 
 
